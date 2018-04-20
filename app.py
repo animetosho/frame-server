@@ -68,7 +68,7 @@ def application(env, start_response):
 			for frame in packet.decode():
 				sWidth = frame.width
 				sHeight = frame.height
-				is_anamorphic = (video.sample_aspect_ratio != 0 and video.sample_aspect_ratio != 1)
+				is_anamorphic = (video.sample_aspect_ratio != 0 and video.sample_aspect_ratio != 1 and video.sample_aspect_ratio is not None)
 				if is_anamorphic:
 					if video.sample_aspect_ratio > 1:
 						sWidth = int(round(frame.width*video.sample_aspect_ratio))
