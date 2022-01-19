@@ -1,8 +1,14 @@
 import av
-import StringIO
+try:
+	from StringIO import StringIO
+except ImportError:
+	from io import BytesIO as StringIO
 import os.path
 import re
-from urlparse import parse_qs
+try:
+	from urlparse import parse_qs
+except ImportError:
+	from urllib.parse import parse_qs
 from PIL import Image
 
 def to_int(s):
@@ -13,6 +19,22 @@ def to_int(s):
 
 def render_sub(image, sub):
 	return Image.alpha_composite(image.convert("RGBA"), sub)
+
+def frame_from_video(file):
+	container = av.open(file, buffer_size=262144)
+	video = next(s for s in container.streams if s.type == b'video')
+	
+	ret = None
+	
+	if video:
+		for packet in container.demux(video):
+			for frame in packet.decode():
+				ret = frame
+				break
+			if ret is not None:
+				break
+	
+	return ret
 
 def application(env, start_response):
 	
@@ -58,83 +80,74 @@ def application(env, start_response):
 			sub = Image.open(subFile).convert("RGBA")
 	
 	# open and render video
-	container = av.open(file)
-	video = next(s for s in container.streams if s.type == b'video')
-	frame_found = False
-	
-	if video:
-		output = StringIO.StringIO()
-		for packet in container.demux(video):
-			for frame in packet.decode():
-				sWidth = frame.width
-				sHeight = frame.height
-				is_anamorphic = (video.sample_aspect_ratio != 0 and video.sample_aspect_ratio != 1 and video.sample_aspect_ratio is not None)
-				if is_anamorphic:
-					if video.sample_aspect_ratio > 1:
-						sWidth = int(round(frame.width*video.sample_aspect_ratio))
-					else:
-						sHeight = int(round(frame.height/video.sample_aspect_ratio))
-				
-				# if rendering subtitle, use that as a source of truth for dimensions
-				# this is a workaround for PyAV not always detecting anamorphic content
-				if sub and (sWidth != sub.width or sHeight != sub.height):
-					sWidth = sub.width
-					sHeight = sub.height
-					is_anamorphic = True
-				
-				if reW or reH:
-					# a problem with never upscaling is that for our srcset attribute, we go up to 384x288, so if the source video is smaller (unlikely these days), it'll get shrinked on the page
-					# we could allow upscaling, but have to set a maximum dimension limit
-					if sWidth <= reW:
-						reW = None
-					if sHeight <= reH:
-						reH = None
-				if reW or reH:
-					sRatio = float(sWidth) / sHeight
-					if reW and reH:
-						tRatio = float(reW) / reH
-						if tRatio > sRatio:
-							reW = reH * sRatio
-						elif tRatio < sRatio:
-							reH = reW / sRatio
-					elif reW:
-						reH = reW / sRatio
-					else:
-						reW = reH * sRatio
-					reW = int(round(reW))
-					reH = int(round(reH))
-					
-					if sub:
-						if is_anamorphic:
-							image = frame.reformat(width=sWidth, height=sHeight, format='rgb24').to_image()
-						else:
-							image = frame.to_image()
-						image = render_sub(image, sub).convert("RGB")
-						image = image.resize((reW, reH), Image.BICUBIC)
-					else:
-						image = frame.reformat(width=reW, height=reH, format='rgb24').to_image()
-				else:
-					if is_anamorphic:
-						image = frame.reformat(width=sWidth, height=sHeight, format='rgb24').to_image()
-					else:
-						image = frame.to_image()
-					if sub:
-						image = render_sub(image, sub)
-					
-				if fmt == "PNG":
-					image.save(output, format="PNG", compress_level=3)
-				elif fmt == "JPEG":
-					image.save(output, format="JPEG", quality=85)
-				elif fmt == "WEBP":
-					image.save(output, format="WEBP", lossless=True)
-				frame_found = True
-				break
-			if frame_found:
-				break
-	
-	if not frame_found:
+	frame = frame_from_video(file)
+	if frame is None:
 		start_response('500 Internal Server Error', [('Content-Type', 'text/plain')])
 		return ["Failed to generate screenshot"]
+	
+	output = StringIO()
+	
+	sWidth = frame.width
+	sHeight = frame.height
+	is_anamorphic = (video.sample_aspect_ratio != 0 and video.sample_aspect_ratio != 1 and video.sample_aspect_ratio is not None)
+	if is_anamorphic:
+		if video.sample_aspect_ratio > 1:
+			sWidth = int(round(frame.width*video.sample_aspect_ratio))
+		else:
+			sHeight = int(round(frame.height/video.sample_aspect_ratio))
+	
+	# if rendering subtitle, use that as a source of truth for dimensions
+	# this is a workaround for PyAV not always detecting anamorphic content
+	if sub and (sWidth != sub.width or sHeight != sub.height):
+		sWidth = sub.width
+		sHeight = sub.height
+		is_anamorphic = True
+	
+	if reW or reH:
+		# a problem with never upscaling is that for our srcset attribute, we go up to 384x288, so if the source video is smaller (unlikely these days), it'll get shrinked on the page
+		# we could allow upscaling, but have to set a maximum dimension limit
+		if sWidth <= reW:
+			reW = None
+		if sHeight <= reH:
+			reH = None
+	if reW or reH:
+		sRatio = float(sWidth) / sHeight
+		if reW and reH:
+			tRatio = float(reW) / reH
+			if tRatio > sRatio:
+				reW = reH * sRatio
+			elif tRatio < sRatio:
+				reH = reW / sRatio
+		elif reW:
+			reH = reW / sRatio
+		else:
+			reW = reH * sRatio
+		reW = int(round(reW))
+		reH = int(round(reH))
+		
+		if sub:
+			if is_anamorphic:
+				image = frame.reformat(width=sWidth, height=sHeight, format='rgb24').to_image()
+			else:
+				image = frame.to_image()
+			image = render_sub(image, sub).convert("RGB")
+			image = image.resize((reW, reH), Image.BICUBIC)
+		else:
+			image = frame.reformat(width=reW, height=reH, format='rgb24').to_image()
+	else:
+		if is_anamorphic:
+			image = frame.reformat(width=sWidth, height=sHeight, format='rgb24').to_image()
+		else:
+			image = frame.to_image()
+		if sub:
+			image = render_sub(image, sub)
+		
+	if fmt == "PNG":
+		image.save(output, format="PNG", compress_level=3)
+	elif fmt == "JPEG":
+		image.save(output, format="JPEG", quality=85)
+	elif fmt == "WEBP":
+		image.save(output, format="WEBP", lossless=True)
 	
 	if sub:
 		sub.close()
