@@ -20,9 +20,18 @@ def to_int(s):
 def render_sub(image, sub):
 	return Image.alpha_composite(image.convert("RGBA"), sub)
 
-def frame_from_video(file):
-	container = av.open(file, buffer_size=262144)
-	video = next(s for s in container.streams if s.type == b'video')
+def frame_from_video(file, vid_opts=None):
+	
+	if vid_opts != None:
+		container = av.open(file, options=vid_opts, buffer_size=262144)
+		video = next(s for s in container.streams if s.type == 'video')
+		if video.is_open == 1:
+			video.close()
+		video.codec_context.options = vid_opts
+		video.open()
+	else:
+		container = av.open(file)
+		video = next(s for s in container.streams if s.type == 'video')
 	
 	ret = None
 	
@@ -34,7 +43,9 @@ def frame_from_video(file):
 			if ret is not None:
 				break
 	
-	return ret
+	container.close()
+	
+	return video, ret
 
 def application(env, start_response):
 	
@@ -79,8 +90,17 @@ def application(env, start_response):
 		if os.path.isfile(subFile):
 			sub = Image.open(subFile).convert("RGBA")
 	
-	# open and render video
-	frame = frame_from_video(file)
+	vid_opts = {}
+	if 'x264' in params:
+		x264_build = to_int(params['x264'][0])
+		if x264_build < 151: # TODO: sending '157' can cause it to not be handled properly; since we only need this for 150 or lower, only do it for that (example '157': https://animetosho.org/view/commie-lupin-third-part-5-volume-3-bd-720p-aac.n1095684)
+			vid_opts['x264_build'] = str(x264_build)
+	
+	frame = None
+	try:
+		video, frame = frame_from_video(file, vid_opts)
+	except:
+		pass
 	if frame is None:
 		start_response('500 Internal Server Error', [('Content-Type', 'text/plain')])
 		return ["Failed to generate screenshot"]
