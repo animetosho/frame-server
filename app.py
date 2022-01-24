@@ -147,18 +147,18 @@ def application(env, start_response):
 		
 		if sub:
 			if is_anamorphic:
-				image = frame.reformat(width=sWidth, height=sHeight, format='rgb24').to_image()
+				image = frame.reformat(width=sWidth, height=sHeight, interpolation='BICUBIC', format='rgb24').to_image()
 			else:
-				image = frame.to_image()
+				image = frame.to_image(interpolation='BICUBIC')
 			image = render_sub(image, sub).convert("RGB")
 			image = image.resize((reW, reH), Image.BICUBIC)
 		else:
 			image = frame.reformat(width=reW, height=reH, format='rgb24').to_image()
 	else:
 		if is_anamorphic:
-			image = frame.reformat(width=sWidth, height=sHeight, format='rgb24').to_image()
+			image = frame.reformat(width=sWidth, height=sHeight, interpolation='BICUBIC', format='rgb24').to_image()
 		else:
-			image = frame.to_image()
+			image = frame.to_image(interpolation='BICUBIC')
 		if sub:
 			image = render_sub(image, sub)
 		
