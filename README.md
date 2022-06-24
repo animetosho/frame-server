@@ -99,8 +99,7 @@ Script is designed to run under uWSGI. A [sample INI configuration is
 supplied](<sample-uwsgi.ini>).
 
 It should operate under Python 2. Probably works under Python 3. It requires the
-[PyAV](<https://github.com/mikeboers/PyAV>) and
-[PIL](<https://python-pillow.org/>) modules.
+[PyAV](<https://github.com/mikeboers/PyAV>), [PIL](<https://python-pillow.org/>) and [fpnge](https://github.com/animetosho/python-fpnge) modules.
 
 You’ll also likely need a webserver that can interact with uWSGI, such as nginx.
 It is strongly recommended that a caching layer be placed in front, e.g. nginx’s
