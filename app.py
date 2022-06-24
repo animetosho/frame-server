@@ -10,6 +10,7 @@ try:
 except ImportError:
 	from urllib.parse import parse_qs
 from PIL import Image
+import fpnge
 
 def to_int(s):
 	try:
@@ -18,7 +19,7 @@ def to_int(s):
 		return 0
 
 def render_sub(image, sub):
-	return Image.alpha_composite(image.convert("RGBA"), sub)
+	return Image.alpha_composite(image.convert("RGBA"), sub).convert("RGB")
 
 def frame_from_video(file, vid_opts=None):
 	
@@ -105,7 +106,6 @@ def application(env, start_response):
 		start_response('500 Internal Server Error', [('Content-Type', 'text/plain')])
 		return ["Failed to generate screenshot"]
 	
-	output = StringIO()
 	
 	sWidth = frame.width
 	sHeight = frame.height
@@ -150,7 +150,7 @@ def application(env, start_response):
 				image = frame.reformat(width=sWidth, height=sHeight, interpolation='BICUBIC', format='rgb24').to_image()
 			else:
 				image = frame.to_image(interpolation='BICUBIC')
-			image = render_sub(image, sub).convert("RGB")
+			image = render_sub(image, sub)
 			image = image.resize((reW, reH), Image.BICUBIC)
 		else:
 			image = frame.reformat(width=reW, height=reH, format='rgb24').to_image()
@@ -162,18 +162,23 @@ def application(env, start_response):
 		if sub:
 			image = render_sub(image, sub)
 		
-	if fmt == "PNG":
-		image.save(output, format="PNG", compress_level=3)
-	elif fmt == "JPEG":
-		image.save(output, format="JPEG", quality=85)
-	elif fmt == "WEBP":
-		image.save(output, format="WEBP", lossless=True)
 	
 	if sub:
 		sub.close()
 	
-	data = output.getvalue()
-	output.close()
+	if fmt == "PNG":
+		data = fpnge.fromPIL(image)
+	else:
+		output = StringIO()
+		if fmt == "PNG": # backup if fpnge disabled
+			image.save(output, format="PNG", compress_level=3)
+		elif fmt == "JPEG":
+			image.save(output, format="JPEG", quality=85)
+		#elif fmt == "WEBP":
+		#	image.save(output, format="WEBP", lossless=True)
+		
+		data = output.getvalue()
+		output.close()
 	
 	headers.append(('Content-Length', str(len(data))))
 	start_response('200 OK', headers)
