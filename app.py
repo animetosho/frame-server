@@ -1,16 +1,16 @@
-import av
-try:
-	from StringIO import StringIO
-except ImportError:
-	from io import BytesIO as StringIO
+import vapoursynth as vs
+#import logging
+#logging.basicConfig(level=logging.DEBUG)
 import os.path
 import re
 try:
 	from urlparse import parse_qs
 except ImportError:
 	from urllib.parse import parse_qs
-from PIL import Image
-import fpnge
+
+
+vs.core.num_threads = 1
+vs.core.max_cache_size = 64 # MB
 
 def to_int(s):
 	try:
@@ -18,47 +18,17 @@ def to_int(s):
 	except:
 		return 0
 
-def render_sub(image, sub):
-	return Image.alpha_composite(image.convert("RGBA"), sub).convert("RGB")
-
-def frame_from_video(file, vid_opts=None):
-	
-	if vid_opts != None:
-		container = av.open(file, options=vid_opts, buffer_size=262144)
-		video = next(s for s in container.streams if s.type == 'video')
-		if video.is_open == 1:
-			video.close()
-		video.codec_context.options = vid_opts
-		video.open()
-	else:
-		container = av.open(file)
-		video = next(s for s in container.streams if s.type == 'video')
-	
-	ret = None
-	
-	if video:
-		for packet in container.demux(video):
-			for frame in packet.decode():
-				ret = frame
-				break
-			if ret is not None:
-				break
-	
-	container.close()
-	
-	return video, ret
-
 def application(env, start_response):
-	
-	#### EDIT THE FOLLOWING FOR URL MAPPING ####
-	
-	m = re.search(r"/([0-9a-f]{8}_\d+)\.(png|jpg|webp)$", env.get('PATH_INFO'))
+	### EDIT URL mapping here if desired
+	m = re.search(r"/([0-9a-f]{3})([0-9a-f]{3})([0-9a-f]{2})_(\d+)\.(png|jpg)$", env.get('PATH_INFO'))
 	if not m:
 		start_response('404 Not Found', [('Content-Type', 'text/plain')])
 		return ["Invalid request"]
 	
-	file_base = "/storage/" + m.group(1) ## EDIT PATH
-	file = file_base + ".mkv"
+	### EDIT File location mapping here if desired
+	file_base = env.get('BASE_PATH') + m.group(1) + "/" + m.group(2) + "/" + m.group(3) + "_"
+	ts = m.group(4)
+	file = file_base + ts + ".mkv"
 	
 	if not os.path.isfile(file):
 		start_response('404 Not Found', [('Content-Type', 'text/plain')])
@@ -66,8 +36,7 @@ def application(env, start_response):
 	
 	params = parse_qs(env.get('QUERY_STRING'))
 	
-	# determine desired output format
-	fmt = m.group(2).upper()
+	fmt = m.group(5).upper()
 	if fmt == "JPG":
 		fmt = "JPEG"
 	headers = [('Content-Type', 'image/' + fmt.lower())]
@@ -83,53 +52,100 @@ def application(env, start_response):
 		reH = to_int(params['h'][0])
 		if reH < 1:
 			reH = None
+	frameNum = 0
+	if 'f' in params:
+		frameNum = to_int(params['f'][0])
+		if frameNum < 0:
+			frameNum = 0
 	
 	# do we want to render subtitles?
 	sub = None
 	if 's' in params:
-		subFile = file_base + "_" + str(to_int(params['s'][0])) + ".webp" ## EDIT PATH
+		### EDIT Subtitle image location mapping here if desired
+		subFile = file_base + str(to_int(params['s'][0])) + "_" + ts + ".webp"
 		if os.path.isfile(subFile):
-			sub = Image.open(subFile).convert("RGBA")
+			sub = vs.core.bs.VideoSource(subFile, cachemode=0, threads=1, cachesize=48)
 	
-	vid_opts = {}
+	codec_opts = None
 	if 'x264' in params:
 		x264_build = to_int(params['x264'][0])
 		if x264_build < 151: # TODO: sending '157' can cause it to not be handled properly; since we only need this for 150 or lower, only do it for that (example '157': https://animetosho.org/view/commie-lupin-third-part-5-volume-3-bd-720p-aac.n1095684)
-			vid_opts['x264_build'] = str(x264_build)
+			codec_opts = ['x264_build', str(x264_build)]
 	
-	frame = None
+	clip = None
 	try:
-		video, frame = frame_from_video(file, vid_opts)
+		clip = vs.core.bs.VideoSource(file, cachemode=0, threads=1, cachesize=48, codec_opts=codec_opts)
+		if clip.num_frames > 1:
+			if frameNum >= clip.num_frames:
+				frameNum = 0
+			clip = clip[frameNum : frameNum+1]
+		frame = clip.get_frame(0)
 	except:
 		pass
-	if frame is None:
+	if clip is None:
 		start_response('500 Internal Server Error', [('Content-Type', 'text/plain')])
 		return ["Failed to generate screenshot"]
 	
 	
+	resizeArgs = {'clip': clip, 'format': vs.RGB24}
 	sWidth = frame.width
 	sHeight = frame.height
-	is_anamorphic = (video.sample_aspect_ratio != 0 and video.sample_aspect_ratio != 1 and video.sample_aspect_ratio is not None)
-	if is_anamorphic:
-		if video.sample_aspect_ratio > 1:
-			sWidth = int(round(frame.width*video.sample_aspect_ratio))
+	
+	# if colorimetry not defined, follow MPV's heuristics [https://wiki.x266.mov/docs/colorimetry/matrix]
+	matrix_in = frame.props['_Matrix']
+	if matrix_in == vs.MATRIX_UNSPECIFIED:
+		matrix_in = vs.MATRIX_BT709 if sWidth >= 1280 or sHeight > 576 else vs.MATRIX_ST170_M
+		resizeArgs['matrix_in'] = matrix_in
+	if frame.props['_Primaries'] == vs.PRIMARIES_UNSPECIFIED:
+		if matrix_in == vs.MATRIX_BT2020_NCL or matrix_in == vs.MATRIX_BT2020_CL:
+			resizeArgs['primaries_in'] = vs.PRIMARIES_BT2020
+		elif matrix_in == vs.MATRIX_BT709 or sWidth >= 1280 or sHeight > 576:
+			resizeArgs['primaries_in'] = vs.PRIMARIES_BT709
+		elif sHeight == 576:
+			resizeArgs['primaries_in'] = vs.PRIMARIES_BT470_BG
+		elif sHeight == 480 or sHeight == 488:
+			resizeArgs['primaries_in'] = vs.PRIMARIES_ST170_M
 		else:
-			sHeight = int(round(frame.height/video.sample_aspect_ratio))
+			resizeArgs['primaries_in'] = vs.PRIMARIES_BT709
+	if frame.props['_Transfer'] == vs.TRANSFER_UNSPECIFIED:
+		resizeArgs['transfer_in'] = vs.TRANSFER_BT709
 	
-	# if rendering subtitle, use that as a source of truth for dimensions
-	# this is a workaround for PyAV not always detecting anamorphic content
-	if sub and (sWidth != sub.width or sHeight != sub.height):
-		sWidth = sub.width
-		sHeight = sub.height
+	# unfortunately, this doesn't pick up stream SAR, which may or may not be more accurate (BS prefers codec SAR over stream SAR)
+	is_anamorphic = False
+	if frame.props['_SARNum'] != 1 or frame.props['_SARDen'] != 1:
 		is_anamorphic = True
+		sRatio = float(frame.props['_SARNum']) / frame.props['_SARDen']
+		if sRatio > 1:
+			sWidth = int(round(frame.width*sRatio))
+		else:
+			sHeight = int(round(frame.height/sRatio))
+	#  problematic clips: https://animetosho.org/file/maria-watches-over-us-s04e01-school-festival-shock-mkv.1037428 & https://animetosho.org/file/ironclad-dungeon-meshi-04-10bit-1080p-av1-mkv.1137705
 	
-	if reW or reH:
-		# a problem with never upscaling is that for our srcset attribute, we go up to 384x288, so if the source video is smaller (unlikely these days), it'll get shrinked on the page
-		# we could allow upscaling, but have to set a maximum dimension limit
-		if sWidth <= reW:
-			reW = None
-		if sHeight <= reH:
-			reH = None
+	# TODO: how to detect Dolby Vision? pull AV_FRAME_DATA_DOVI_METADATA [https://ffmpeg.org/doxygen/trunk/structAVDOVIMetadata.html] side data?
+	if 'ContentLightLevelMax' in frame.props and frame.props['ContentLightLevelMax'] >= 600 and 'MasteringDisplayWhitePointX' in frame.props and 'MasteringDisplayWhitePointY' in frame.props and 'MasteringDisplayPrimariesX' in frame.props and 'MasteringDisplayPrimariesY' in frame.props:
+		# this might be HDR10
+		# check for Rec2020 primaries
+		primX = frame.props['MasteringDisplayPrimariesX']
+		primY = frame.props['MasteringDisplayPrimariesY']
+		if abs(frame.props['MasteringDisplayWhitePointX'] - 0.3127) < 0.0001 and abs(frame.props['MasteringDisplayWhitePointY'] - 0.3290) < 0.0001 and abs(primX[0] - 0.708) < 0.0001 and abs(primX[1] - 0.170) < 0.0001 and abs(primX[2] - 0.131) < 0.0001 and abs(primY[0] - 0.292) < 0.0001 and abs(primY[1] - 0.797) < 0.0001 and abs(primY[2] - 0.046) < 0.0001:
+			# this is likely HDR10
+			# TODO: convert to RGB48 instead?
+			pass
+			# TODO: check for HDR10+? likely requires source support to pull the AV_FRAME_DATA_DYNAMIC_HDR_PLUS [https://ffmpeg.org/doxygen/trunk/structAVDynamicHDRPlus.html] side info
+	
+	frame.close()
+	
+	# a problem with never upscaling is that for our srcset attribute, we go up to 384x288, so if the source video is smaller (unlikely these days), it'll get shrinked on the page
+	# we could allow upscaling, but have to set a maximum dimension limit
+	if reW and sWidth <= reW:
+		reW = None
+	if reH and sHeight <= reH:
+		reH = None
+	
+	if is_anamorphic:
+		resizeArgs['width'] = sWidth
+		resizeArgs['height'] = sHeight
+	
 	if reW or reH:
 		sRatio = float(sWidth) / sHeight
 		if reW and reH:
@@ -146,39 +162,22 @@ def application(env, start_response):
 		reH = int(round(reH))
 		
 		if sub:
-			if is_anamorphic:
-				image = frame.reformat(width=sWidth, height=sHeight, interpolation='BICUBIC', format='rgb24').to_image()
-			else:
-				image = frame.to_image(interpolation='BICUBIC')
-			image = render_sub(image, sub)
-			image = image.resize((reW, reH), Image.BICUBIC)
+			clip = vs.core.resize.Bicubic(**resizeArgs)
+			clip = vs.core.std.MaskedMerge(clip, sub, vs.core.std.PropToClip(sub))
+			clip = vs.core.resize.Bicubic(clip, width=reW, height=reH)
 		else:
-			image = frame.reformat(width=reW, height=reH, format='rgb24').to_image()
+			resizeArgs['width'] = reW
+			resizeArgs['height'] = reH
+			clip = vs.core.resize.Bicubic(**resizeArgs)
 	else:
-		if is_anamorphic:
-			image = frame.reformat(width=sWidth, height=sHeight, interpolation='BICUBIC', format='rgb24').to_image()
-		else:
-			image = frame.to_image(interpolation='BICUBIC')
+		clip = vs.core.resize.Bicubic(**resizeArgs)
 		if sub:
-			image = render_sub(image, sub)
-		
+			clip = vs.core.std.MaskedMerge(clip, sub, vs.core.std.PropToClip(sub))
 	
-	if sub:
-		sub.close()
-	
-	if fmt == "PNG":
-		data = fpnge.fromPIL(image)
-	else:
-		output = StringIO()
-		if fmt == "PNG": # backup if fpnge disabled
-			image.save(output, format="PNG", compress_level=3)
-		elif fmt == "JPEG":
-			image.save(output, format="JPEG", quality=85)
-		#elif fmt == "WEBP":
-		#	image.save(output, format="WEBP", lossless=True)
-		
-		data = output.getvalue()
-		output.close()
+	with clip.get_frame(0) as frame:
+		qparam = 85 if fmt=="JPEG" else 4
+		# TODO: pass color_trc to cICP
+		data = vs.core.encodeframe.EncodeFrame(frame, fmt, param=qparam)
 	
 	headers.append(('Content-Length', str(len(data))))
 	start_response('200 OK', headers)

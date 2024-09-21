@@ -36,11 +36,12 @@ However, if only a small number of images are frequently served, caching can sig
 
 Script is designed to run under uWSGI. A [sample INI configuration is supplied](sample-uwsgi.ini).
 
-It should operate under Python 2. Probably works under Python 3. It requires the [PyAV](https://github.com/mikeboers/PyAV), [PIL](https://python-pillow.org/) and [fpnge](https://github.com/animetosho/python-fpnge) modules.
+Rendering uses the [VapourSynth](http://www.vapoursynth.com/) framework and [these](https://github.com/animetosho/bestsource) [two](https://github.com/animetosho/vs-encodeframe) plugins.
+(a previous version used [PyAV](https://github.com/animetosho/PyAV), [PIL](https://python-pillow.org/) and [fpnge](https://github.com/animetosho/python-fpnge) instead).
 
 You’ll also likely need a webserver that can interact with uWSGI, such as nginx. It is strongly recommended that a caching layer be placed in front, e.g. nginx’s uwsgi cache or a HTTP caching proxy, to reduce load. A [sample nginx configuration is also supplied](sample-nginx.conf).
 
-Finally, you’ll need to edit [the script](app.py) to configure the location that files are stored, and the desired URL mapping to these files.
+Finally, you may wish to edit [the script](app.py) and [INI](sample-uwsgi.ini) to configure the location that files are stored, and the desired URL mapping to these files.
 
 **Note: I do not intend to provide support for this script, as it is intended primarily for informative purposes**
 
@@ -62,7 +63,7 @@ The process used by Anime Tosho’s script to produce compatible images is perha
 A frame from a video can be extracted using the [ffmpeg utility](http://ffmpeg.org/), with a command like the following.
 
 ```bash
-ffmpeg -y -fflags genpts -noaccurate_seek -ss [target_time] -i [input_file] -map_chapters -1 -map_metadata -1 -an -sn -dn -vcodec copy -frames 1 -f matroska [output_file]
+ffmpeg -y -fflags +genpts+noparse -noaccurate_seek -ss [target_time] -i [input_file] -map_chapters -1 -map_metadata -1 -an -sn -dn -vcodec copy -frames 1 -f matroska [output_file]
 ```
 
 The result should be a single frame MKV video file containing the last I frame before the target time specified.
