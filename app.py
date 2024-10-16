@@ -74,7 +74,7 @@ def application(env, start_response):
 	
 	clip = None
 	try:
-		clip = vs.core.bs.VideoSource(file, cachemode=0, threads=1, cachesize=48, codec_opts=codec_opts)
+		clip = vs.core.bs.VideoSource(file, cachemode=0, threads=1, cachesize=48, seekpreroll=0, seeksearch=1, codec_opts=codec_opts)
 		if clip.num_frames > 1:
 			if frameNum >= clip.num_frames:
 				frameNum = 0
@@ -112,7 +112,7 @@ def application(env, start_response):
 	
 	# unfortunately, this doesn't pick up stream SAR, which may or may not be more accurate (BS prefers codec SAR over stream SAR)
 	is_anamorphic = False
-	if frame.props['_SARNum'] != 1 or frame.props['_SARDen'] != 1:
+	if ('_SARNum' in frame.props) and (frame.props['_SARNum'] != 1 or frame.props['_SARDen'] != 1):
 		is_anamorphic = True
 		sRatio = float(frame.props['_SARNum']) / frame.props['_SARDen']
 		if sRatio > 1:
@@ -175,9 +175,8 @@ def application(env, start_response):
 			clip = vs.core.std.MaskedMerge(clip, sub, vs.core.std.PropToClip(sub))
 	
 	with clip.get_frame(0) as frame:
-		qparam = 85 if fmt=="JPEG" else 4
 		# TODO: pass color_trc to cICP
-		data = vs.core.encodeframe.EncodeFrame(frame, fmt, param=qparam)
+		data = vs.core.encodeframe.EncodeFrame(frame, fmt, quality=85) # 'quality' only applies to JPEG
 	
 	headers.append(('Content-Length', str(len(data))))
 	start_response('200 OK', headers)

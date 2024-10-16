@@ -36,7 +36,7 @@ However, if only a small number of images are frequently served, caching can sig
 
 Script is designed to run under uWSGI. A [sample INI configuration is supplied](sample-uwsgi.ini).
 
-Rendering uses the [VapourSynth](http://www.vapoursynth.com/) framework and [these](https://github.com/animetosho/bestsource) [two](https://github.com/animetosho/vs-encodeframe) plugins.
+Rendering uses the [VapourSynth](http://www.vapoursynth.com/) framework and [these](https://github.com/animetosho/bestsource) [two](https://github.com/animetosho/vs-encodeframe) plugins.  
 (a previous version used [PyAV](https://github.com/animetosho/PyAV), [PIL](https://python-pillow.org/) and [fpnge](https://github.com/animetosho/python-fpnge) instead).
 
 You’ll also likely need a webserver that can interact with uWSGI, such as nginx. It is strongly recommended that a caching layer be placed in front, e.g. nginx’s uwsgi cache or a HTTP caching proxy, to reduce load. A [sample nginx configuration is also supplied](sample-nginx.conf).
